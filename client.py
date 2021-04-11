@@ -6,10 +6,24 @@ import face_recognition as fr
 from Crypto.Cipher import AES
 import sys
 import numpy
+import socket
+from Crypto.Util.Padding import pad, unpad
+
+def send(msg):
+    message = msg.encode(FORMAT)
+    en_cipher=AES.new(KEY, AES.MODE_CBC, IV=iv)
+    ciphertext=en_cipher.encrypt(pad(message,16))
+    msg_len=len(ciphertext)
+    send_len=str(msg_len).encode(FORMAT)
+    send_len+=b' '*(HEADER-len(send_len)) #make the first message 64
+    client.send(send_len) #send out length of message
+    client.send(ciphertext) #send the message
 
 ###initial setup
 HOST="104.194.110.170"
 PORT=6000
+KEY=b'3874460957140850'
+iv= b'9331626268227018'
 HEADER=64 #size of intial message to send
 DISCONNECT_MESSAGE="!DISCONNECT" #send this message to disconnect
 FORMAT="utf-8" #format for byte decoding
@@ -19,7 +33,12 @@ button=18 #using GPIO 18 for button
 gpio.setmode(gpio.BOARD)
 gpio.setup(button,gpio.IN,pull_up_down=gpio.PUD_DOWN) #set pin 4 as input and tell it that it should be low by default
 #gpio.add_event_detect(18,gpio.RISING,callback=say_cheese,bouncetime=200)	
-while True:	
+
+#setup the socket
+#client=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+while True:
+    access=False #always assume they are an intruder at first
     try:
         while True:
             #print('hi')
@@ -45,13 +64,35 @@ while True:
     encodings=fr.face_encodings(target)
     if len(encodings)!=0:
         target_encoding=encodings[0] #grab the encoding of the face in the picture
-        code=str(random.randrange(1,10000)) #generate a random code to trigger unlock with
-        msg=boxid+code+str(target_encoding)
+        code=str(random.randrange(1000,9999)) #generate a random code to trigger unlock with
+        msg=boxid+','+code+','+str(target_encoding)
         print(msg)
+        #setup the socket
+        client=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect((HOST,PORT))
+        send(msg)
+        message_back=client.recv(1024) #1024 arbitrary number that should always be big enough
+        dec_cipher=AES.new(KEY, AES.MODE_CBC, IV=iv)
+        message_back=dec_cipher.decrypt(message_back)
+        message_back=unpad(message_back,16) #undo padding used for encryption and decryption
+        message_back=message_back.decode(FORMAT) #make it readable
+        print("Message back: " + message_back)
+        if message_back == code:
+            access=True
+            print("Access Granted")
+        else:
+            print("Access Denied")
+        send(DISCONNECT_MESSAGE)
+        client.close()
+        
+        
+        
     else:
         print('no face found')
         
 gpio.cleanup()
 print("gpio cleaned up!")
+
+
 
 
